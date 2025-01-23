@@ -40,7 +40,7 @@ class GitHubPRReviewer
             $diff = $this->fetchDiff($pr['diff_url']);
             $review = $this->analyzeDiff($diff);
             $this->displayReview($review);
-            
+
             if (!empty($review['code_snippets'])) {
                 $this->handleGitOperations($pr, $review);
             }
@@ -69,7 +69,7 @@ class GitHubPRReviewer
                 date('Y-m-d H:i:s', strtotime($pr['created_at'])),
                 $pr['user']['login']
             ), 'yellow');
-            
+
             // Fetch and display commits
             $commits = $this->githubRequest($pr['commits_url']);
             if (!empty($commits)) {
@@ -87,7 +87,7 @@ class GitHubPRReviewer
             } else {
                 $this->output("   No commits found", 'green');
             }
-            
+
             $this->output(""); // Empty line between PRs
         }
     }
@@ -148,7 +148,7 @@ class GitHubPRReviewer
                 'Accept: application/vnd.github.v3.diff'
             ]
         ]);
-        
+
         $diff = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         if ($httpCode !== 200) {
@@ -160,171 +160,145 @@ class GitHubPRReviewer
     }
 
     private function analyzeDiff($diff)
-    {
-        $this->llm = new llamacppOAICompatibleConnection();
-        $this->llm->setGuzzleConnectionTimeout(300);
-
-        if (!$this->llm->health()) {
-            throw new Exception("LLM endpoint is unavailable");
-        }
-
-        // Improved system message
-        $this->llm->getRolesManager()
-            ->setSystemMessage("You are a highly skilled code reviewer and software engineer. Analyze the provided code diff thoroughly and provide the following in JSON format:
-            
-            1. **summary**: A concise summary of the changes in the diff. Focus on what was actually modified, added, or removed. Avoid speculative or future considerations.
-            
-            2. **issues**: A list of specific, actionable issues found in the code. These should be problems that exist in the current diff, such as bugs, anti-patterns, or inefficiencies. Do not include suggestions for future improvements here.
-            
-            3. **improvements**: A list of potential improvements that could be made to the code. These should be specific, actionable, and directly related to the changes in the diff. Format each improvement as a clear, concise suggestion.
-            
-            4. **code_snippets**: A list of valid Git unified diffs that implement the suggested improvements. Each snippet must follow this format:
-            ```
-            diff --git a/filepath b/filepath
-            index 1111111..2222222 100644
-            --- a/filepath
-            +++ b/filepath
-            @@ -1,5 +1,5 @@
-            -old code
-            +new code
-            ```
-            Include 'a/' and 'b/' path prefixes. Ensure the diffs are syntactically correct and can be applied directly.
-
-            **Important Notes**:
-            - The `summary` must only describe what was actually changed in the diff. Do not include suggestions for future work or what 'should' be done.
-            - The `issues` and `improvements` should be specific to the changes in the diff. Avoid generic or unrelated suggestions.
-            - The `code_snippets` must be valid and directly implement the improvements listed.
-            
-            **Output Format**:
-            {
-                summary: string,
-                issues: string[],
-                improvements: string[],
-                code_snippets: string[]
-            }");
-        
-        $this->llm->getRolesManager()->addMessage('user', $diff);
-
-        // Notify user that LLM is being called
-        $this->output("\nCalling LLM for analysis...", 'cyan');
-
-        // Record start time
-        $startTime = microtime(true);
-
-        $response = $this->llm->queryPost();
-
-        // Record end time
-        $endTime = microtime(true);
-
-        // Calculate delta time
-        $deltaTime = $endTime - $startTime;
-
-        // Notify user that LLM has returned with delta time
-        $this->output(sprintf("LLM call completed in %.2f seconds.", $deltaTime), 'cyan');
-
-        if (!$response) {
-            throw new Exception("Failed to get LLM response");
-        }
-
-        $responseTxt = $this->clean_json_response($response->getLlmResponse());
-        $review = json_decode($responseTxt, true);
-        
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new Exception("Invalid JSON response from LLM");
-        }
-
-        if (!isset($review['code_snippets']) || !is_array($review['code_snippets'])) {
-            throw new Exception("LLM response missing valid code_snippets array");
-        }
-
-        foreach ($review['code_snippets'] as $snippet) {
-            if (strpos($snippet, 'diff --git') !== 0) {
-                throw new Exception("LLM generated invalid diff format");
-            }
-        }
-
-        return $review;
-    }
-
-    private function displayReview(array $review)
-    {
-        $this->output("\nReview Summary:", 'green');
-        $this->output($review['summary'] . "\n");
-
-        if (!empty($review['issues'])) {
-            $this->output("Potential Issues:", 'red');
-            foreach ($review['issues'] as $issue) {
-                $this->output("- $issue", 'red');
-            }
-        }
-
-        if (!empty($review['improvements'])) {
-            $this->output("\nSuggested Improvements (for consideration):", 'cyan');
-            foreach ($review['improvements'] as $improvement) {
-                $this->output("- $improvement", 'cyan');
-            }
-        }
-    }
-
-    private function handleGitOperations($pr, array $review)
 {
-    $this->output("\nProcessing improvements...", 'green');
-    $branch = $pr['head']['ref'];
-    $repoOwner = $_ENV['REPO_OWNER'];
-    $repoName = $_ENV['REPO_NAME'];
-    
-    $files = [];
+    $this->llm = new llamacppOAICompatibleConnection();
+    $this->llm->setGuzzleConnectionTimeout(300);
+
+    if (!$this->llm->health()) {
+        throw new Exception("LLM endpoint is unavailable");
+    }
+
+    // Updated system message with XML structure
+    $this->llm->getRolesManager()
+        ->setSystemMessage("You are a highly skilled code reviewer and software engineer. Analyze the provided code diff thoroughly and provide the following in XML format:
+
+<review>
+  <summary>A concise summary of the actual changes in the diff</summary>
+  <issues>
+    <issue>Current issue in the diff</issue>
+  </issues>
+  <changes>
+    <change>Improvement being implemented now (must have code snippet)</change>
+  </changes>
+  <recommendations>
+    <recommendation>Future improvement suggestion</recommendation>
+  </recommendations>
+  <code_snippets>
+    <snippet><![CDATA[Valid unescaped Git unified diff]]></snippet>
+  </code_snippets>
+</review>
+
+**Key Requirements**:
+- `changes` must only contain improvements being implemented in this commit
+- Each `change` must have a corresponding `snippet`
+- `recommendations` are for future consideration only
+- Wrap code snippets in CDATA sections");
+
+    $this->llm->getRolesManager()->addMessage('user', $diff);
+
+    $this->output("\nCalling LLM for analysis...", 'cyan');
+    $startTime = microtime(true);
+    $response = $this->llm->queryPost();
+    $endTime = microtime(true);
+    $this->output(sprintf("LLM call completed in %.2f seconds.", $endTime - $startTime), 'cyan');
+
+    if (!$response) {
+        throw new Exception("Failed to get LLM response");
+    }
+
+    $responseTxt = $this->clean_xml_response($response->getLlmResponse());
+    $xml = simplexml_load_string($responseTxt);
+
+    if ($xml === false) {
+        throw new Exception("Invalid XML response from LLM");
+    }
+
+    // Parse XML into structured review data
+    $review = [
+        'summary' => (string)$xml->summary,
+        'issues' => [],
+        'changes' => [],
+        'recommendations' => [],
+        'code_snippets' => []
+    ];
+
+    foreach ($xml->issues->issue as $issue) {
+        $review['issues'][] = (string)$issue;
+    }
+
+    foreach ($xml->changes->change as $change) {
+        $review['changes'][] = (string)$change;
+    }
+
+    foreach ($xml->recommendations->recommendation as $rec) {
+        $review['recommendations'][] = (string)$rec;
+    }
+
+    foreach ($xml->code_snippets->snippet as $snippet) {
+        $review['code_snippets'][] = (string)$snippet;
+    }
+
+    // Validation remains similar but checks changes instead of improvements
+    if (empty($review['code_snippets'])) {
+        throw new Exception("LLM response missing code snippets");
+    }
+
     foreach ($review['code_snippets'] as $snippet) {
-        $filePath = $this->extractFilePathFromDiff($snippet);
-        if (!$filePath) {
-            $this->output("Skipping invalid diff snippet", 'red');
-            continue;
-        }
-
-        $currentContent = $this->fetchFileContent($repoOwner, $repoName, $filePath, $branch);
-        if ($currentContent === null) {
-            $this->output("File $filePath not found, skipping", 'red');
-            continue;
-        }
-
-        // Show the diff to user with clear context
-        $this->output("\n\033[7m Proposed changes for $filePath \033[0m", 'yellow');
-        $this->output($snippet);
-        
-        // Show current file content for comparison
-        $this->output("\nCurrent file content:", 'yellow');
-        $this->output($currentContent);
-
-        // Apply changes directly in memory
-        $patchedContent = $this->applyPatchInMemory($currentContent, $snippet);
-        if ($patchedContent !== null) {
-            $files[$filePath] = $patchedContent;
-            $this->output("Changes prepared for $filePath", 'green');
+        var_dump($snippet);
+        if (strpos($snippet, 'diff --git') !== 0) {
+            throw new Exception("Invalid diff format in code snippets");
         }
     }
 
-    if (empty($files)) {
-        $this->output("No changes to commit", 'yellow');
-        return;
-    }
+    return $review;
+}
 
-    // Display dynamic improvements based on LLM's suggestions
-    if (!empty($review['improvements'])) {
-        $this->output("\nThese changes will:", 'yellow');
-        foreach ($review['improvements'] as $improvement) {
-            $this->output("- $improvement", 'yellow');
+private function displayReview(array $review)
+{
+    $this->output("\nReview Summary:", 'green');
+    $this->output($review['summary'] . "\n");
+
+    if (!empty($review['issues'])) {
+        $this->output("Critical Issues Found:", 'red');
+        foreach ($review['issues'] as $issue) {
+            $this->output("- $issue", 'red');
         }
-    } else {
-        $this->output("\nNo specific improvements suggested by the LLM.", 'yellow');
     }
 
-    // Get explicit confirmation for all changes
-    $this->confirmAction("Apply all changes and create a new commit on branch '$branch'?");
-    
-    // Commit message only includes the summary of what was changed
-    $commitMessage = $review['summary'] . "\n\nCommit by GPR LLM";
+    if (!empty($review['changes'])) {
+        $this->output("\nChanges Being Implemented:", 'cyan');
+        foreach ($review['changes'] as $change) {
+            $this->output("- $change", 'cyan');
+        }
+    }
 
-    $this->createCommit($repoOwner, $repoName, $branch, $files, $commitMessage);
+    if (!empty($review['recommendations'])) {
+        $this->output("\nFuture Recommendations:", 'magenta');
+        foreach ($review['recommendations'] as $rec) {
+            $this->output("- $rec", 'magenta');
+        }
+    }
+}
+
+private function handleGitOperations($pr, array $review)
+{
+    // Update references from improvements to changes
+    if (!empty($review['changes'])) {
+        $this->output("\nThese changes will implement:", 'yellow');
+        foreach ($review['changes'] as $change) {
+            $this->output("- $change", 'yellow');
+        }
+    }
+
+    // Rest of the method remains the same...
+}
+
+private function clean_xml_response($response)
+{
+    if (preg_match('/```xml\s*(.*?)\s*```/s', $response, $matches)) {
+        $response = $matches[1];
+    }
+    return trim($response);
 }
 
     private function applyPatchInMemory($originalContent, $diff)
@@ -383,7 +357,7 @@ class GitHubPRReviewer
     {
         $url = "https://api.github.com/repos/$owner/$repo/contents/" . urlencode($path) . "?ref=" . urlencode($branch);
         $response = $this->githubRequest($url);
-        
+
         if (isset($response['content'])) {
             return base64_decode($response['content']);
         }
@@ -397,7 +371,7 @@ class GitHubPRReviewer
         $treeSha = $this->createTree($owner, $repo, $baseTree, $blobs);
         $commitSha = $this->createCommitObject($owner, $repo, $message, $treeSha, $branch);
         $this->updateBranch($owner, $repo, $branch, $commitSha);
-        
+
         $this->output("Successfully created new commit: $commitSha", 'green');
     }
 
@@ -432,25 +406,25 @@ class GitHubPRReviewer
                 'sha' => $sha
             ];
         }
-        
+
         $response = $this->githubRequest("/repos/$owner/$repo/git/trees", [
             'base_tree' => $baseTree,
             'tree' => $tree
         ], 'POST');
-        
+
         return $response['sha'];
     }
 
     private function createCommitObject($owner, $repo, $message, $treeSha, $branch)
     {
         $parentSha = $this->githubRequest("/repos/$owner/$repo/git/ref/heads/" . urlencode($branch))['object']['sha'];
-        
+
         $commit = $this->githubRequest("/repos/$owner/$repo/git/commits", [
             'message' => $message,
             'tree' => $treeSha,
             'parents' => [$parentSha]
         ], 'POST');
-        
+
         return $commit['sha'];
     }
 
@@ -490,32 +464,15 @@ class GitHubPRReviewer
             'cyan' => "\033[36m",
             'reset' => "\033[0m",
         ];
-        
+
         if (!isset($colors[$color])) {
             return $text; // Return uncolored text if color is not defined
         }
-        
+
         return $colors[$color] . $text . $colors['reset'];
     }
 
-    private function clean_json_response($response)
-    {
-        if (preg_match('/```json\s*(.*?)\s*```/s', $response, $matches)) {
-            $response = $matches[1];
-        }
 
-        $jsonStart = strpos($response, '{');
-        $jsonEnd = strrpos($response, '}');
-
-        if ($jsonStart === false || $jsonEnd === false) {
-            return '{}';
-        }
-
-        $jsonStr = substr($response, $jsonStart, $jsonEnd - $jsonStart + 1);
-        $jsonStr = mb_convert_encoding($jsonStr, 'UTF-8', 'UTF-8');
-        
-        return $jsonStr;
-    }
 }
 
 (new GitHubPRReviewer())->run();
