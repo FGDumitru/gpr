@@ -1,3 +1,4 @@
+++ b/config.json.dist
 {
     "server": {
       "host": "http://127.0.0.1",
@@ -11,4 +12,4 @@
     },
     "debug": false,
     "description": "Local LLM endpoint"
-  }
+}
