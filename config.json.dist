@@ -1,0 +1,14 @@
+{
+    "server": {
+      "host": "http://127.0.0.1",
+      "port": "5000",
+      "completions": "/v1/chat/completions",
+      "tokenize": "/tokenize",
+      "detokenize": "/detokenize",
+      "health": "/health",
+      "server_type": "llamacpp",
+      "type": "OpenAiCompatibleConnection"
+    },
+    "debug": false,
+    "description": "Local LLM endpoint"
+  }
